@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>英単語クイズ（改良版）</title>
+  <style>
+    body {
+      font-family: sans-serif;
+      background: #f5f5f5;
+      margin: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      height: 100vh;
+    }
+    #app {
+      background: #fff;
+      padding: 20px;
+      border-radius: 12px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+      width: 320px;
+      text-align: center;
+    }
+    #quizContainer, #resultContainer {
+      width: 100%;
+    }
+    #question {
+      font-size: 1.2rem;
+      margin-bottom: 12px;
+      word-break: break-word;
+      min-height: 2.4em;
+    }
+    #choices {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      margin-bottom: 12px;
+      max-height: 240px;
+      overflow-y: auto;
+    }
+    button {
+      padding: 10px 16px;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 1rem;
+    }
+    button.choice {
+      text-align: left;
+      background: #e0e0e0;
+      white-space: normal;
+      word-break: break-word;
+    }
+    button.choice:hover {
+      background: #d5d5d5;
+    }
+    #nextBtn {
+      background: #28a745;
+      color: #fff;
+      display: none;
+    }
+    #loadBtn {
+      background: #007bff;
+      color: #fff;
+    }
+    #feedback {
+      font-size: 1rem;
+      color: #333;
+      min-height: 1.4em;
+      margin-bottom: 8px;
+    }
+    canvas {
+      max-width: 100%;
+    }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <button id="loadBtn">Excelファイルを選択</button>
+    <div id="quizContainer" hidden>
+      <div id="question"></div>
+      <div id="choices"></div>
+      <div id="feedback"></div>
+      <button id="nextBtn">次へ</button>
+    </div>
+    <div id="resultContainer" hidden>
+      <canvas id="resultChart" width="300" height="300"></canvas>
+      <button id="continueBtn">続ける</button>
+    </div>
+  </div>
+
+  <script src="js/xlsx.full.min.js"></script>
+  <script>
+    let wordList = [];
+    let userResults = [];
+    let qIndex = 0;
+
+    document.getElementById('loadBtn').addEventListener('click', async () => {
+      let arrayBuffer;
+      if (window.showOpenFilePicker) {
+        const [handle] = await window.showOpenFilePicker({
+          types: [{ description: 'Excel Files', accept: { 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx'] } }]
+        });
+        const file = await handle.getFile();
+        arrayBuffer = await file.arrayBuffer();
+      } else {
+        const input = document.createElement('input');
+        input.type = 'file'; input.accept = '.xlsx';
+        input.onchange = async e => {
+          arrayBuffer = await e.target.files[0].arrayBuffer();
+          processWorkbook(arrayBuffer);
+        };
+        input.click();
+        return;
+      }
+      processWorkbook(arrayBuffer);
+    });
+
+    function processWorkbook(buffer) {
+      const wb = XLSX.read(buffer, { type: 'array' });
+      wordList = [];
+      wb.SheetNames.forEach(name => {
+        if (/^part[1-3]$/i.test(name)) {
+          const ws = wb.Sheets[name];
+          const rows = XLSX.utils.sheet_to_json(ws, { header:1 });
+          rows.forEach(r => {
+            if (r[2] && r[3]) wordList.push({ word: r[2], meaning: r[3] });
+          });
+        }
+      });
+      shuffle(wordList);
+      startQuiz();
+    }
+
+    function startQuiz() {
+      document.getElementById('loadBtn').hidden = true;
+      document.getElementById('quizContainer').hidden = false;
+      nextQuestion();
+    }
+
+    function nextQuestion() {
+      // フィードバッククリア
+      document.getElementById('feedback').textContent = '';
+      document.getElementById('nextBtn').style.display = 'none';
+      if (qIndex > 0 && qIndex % 10 === 0) { showResults(); return; }
+      const item = wordList[qIndex];
+      const choices = [item.meaning];
+      while (choices.length < 4) {
+        const rnd = wordList[Math.floor(Math.random() * wordList.length)].meaning;
+        if (!choices.includes(rnd)) choices.push(rnd);
+      }
+      shuffle(choices);
+      renderQuestion(item.word, item.meaning, choices);
+    }
+
+    function renderQuestion(word, correct, choices) {
+      document.getElementById('question').textContent = `Q${qIndex+1}: ${word} の意味は？`;
+      const cEl = document.getElementById('choices'); cEl.innerHTML = '';
+      choices.forEach(ch => {
+        const btn = document.createElement('button');
+        btn.textContent = ch;
+        btn.className = 'choice';
+        btn.onclick = () => handleAnswer(btn, ch, correct);
+        cEl.appendChild(btn);
+      });
+    }
+
+    function handleAnswer(btn, selected, correct) {
+      const isCorrect = selected === correct;
+      userResults.push(isCorrect);
+      // ボタン色表示
+      document.querySelectorAll('button.choice').forEach(b => b.disabled = true);
+      btn.style.background = isCorrect ? '#c8e6c9' : '#ffcdd2';
+      // 正解表示
+      const fb = document.getElementById('feedback');
+      fb.textContent = isCorrect ? '正解！' : `不正解… 正解: ${correct}`;
+      // 次へボタン表示
+      document.getElementById('nextBtn').style.display = 'inline-block';
+      document.getElementById('nextBtn').onclick = () => { qIndex++; nextQuestion(); };
+    }
+
+    function showResults() {
+      document.getElementById('quizContainer').hidden = true;
+      document.getElementById('resultContainer').hidden = false;
+      const correctCount = userResults.filter(x => x).length;
+      const wrongCount = userResults.length - correctCount;
+      drawPie(correctCount, wrongCount);
+      document.getElementById('continueBtn').onclick = () => {
+        qIndex++;
+        userResults = [];
+        document.getElementById('resultContainer').hidden = true;
+        document.getElementById('quizContainer').hidden = false;
+        nextQuestion();
+      };
+    }
+
+    function drawPie(correct, wrong) {
+      const canvas = document.getElementById('resultChart');
+      const ctx = canvas.getContext('2d');
+      const total = correct + wrong;
+      let startAngle = -0.5 * Math.PI;
+      // クリア
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      [[correct, '#4caf50'], [wrong, '#f44336']].forEach(([count, color]) => {
+        const sliceAngle = (count / total) * 2 * Math.PI;
+        ctx.beginPath();
+        ctx.moveTo(canvas.width/2, canvas.height/2);
+        ctx.arc(canvas.width/2, canvas.height/2,
+                Math.min(canvas.width, canvas.height)/2 - 10,
+                startAngle, startAngle + sliceAngle);
+        ctx.closePath();
+        ctx.fillStyle = color;
+        ctx.fill();
+        startAngle += sliceAngle;
+      });
+      // ラベル
+      ctx.fillStyle = '#333';
+      ctx.font = '16px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText(`正解: ${correct}`, canvas.width/2, canvas.height/2 - 10);
+      ctx.fillText(`誤答: ${wrong}`, canvas.width/2, canvas.height/2 + 20);
+    }
+
+    function shuffle(arr) {
+      for (let i = arr.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [arr[i], arr[j]] = [arr[j], arr[i]];
+      }
+    }
+  </script>
+</body>
+</html>
